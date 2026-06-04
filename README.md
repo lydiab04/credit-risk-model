@@ -1,3 +1,15 @@
+## Production Setup & Installation
+
+### Prerequisites
+* Python 3.10+
+* Docker & Docker Compose
+
+### Local Environment Installation
+1. Clone the repository and navigate to the root directory:
+   ```bash
+   git clone [https://github.com/lydiab04/credit-risk-model.git](https://github.com/lydiab04/credit-risk-model.git)
+   cd credit-risk-model
+
 ## Credit Scoring Business Understanding
 
 ### 1. Basel II Regulatory Influence on Model Interpretability & Documentation
