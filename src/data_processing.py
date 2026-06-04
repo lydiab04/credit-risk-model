@@ -1,89 +1,45 @@
-# src/data_processing.py
-import os
-import pandas as pd
+# src/data_processing.py (Updates for Task 3 & Task 5 Scorecard metrics)
 import numpy as np
-from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.preprocessing import RobustScaler
-from sklearn.cluster import KMeans
 
-class DefensiveFeatureExtractor(BaseEstimator, TransformerMixin):
+def compute_regulatory_credit_score(probability: float) -> int:
     """
-    Defensively cleans incoming transactional records, processes dates,
-    and removes multicollinear variables.
+    Transforms a model probability of default into a traditional financial credit score
+    scaled between 300 and 850, mimicking Weight of Evidence (WoE) log-odds scaling.
     """
-    def fit(self, X, y=None):
-        return self
+    # Prevent mathematical log(0) errors defensively
+    prob = max(min(probability, 0.9999), 0.0001)
+    
+    # Calculate log-odds (similar to WoE scorecard foundations)
+    log_odds = np.log((1 - prob) / prob)
+    
+    # Standard scorecard scaling formula: Score = Baseline + (Factor * Log-Odds)
+    # Scales roughly such that a 1:1 odds ratio equals a score of 600
+    baseline_score = 600
+    factor = 50
+    
+    credit_score = int(baseline_score + (factor * log_odds))
+    return max(min(credit_score, 850), 300)
 
-    def transform(self, X):
-        # Prevent mutating original memory reference
-        df = X.copy()
+def derive_optimal_loan_terms(credit_score: int, customer_monetary_value: float):
+    """
+    Predicts and assigns the optimal credit line amount and repayment duration
+    based strictly on the customer's credit score tier and historical monetary volume.
+    """
+    # Convert log-transformed monetary back to raw estimate value safely
+    raw_monetary_estimate = np.expm1(customer_monetary_value)
+    
+    if credit_score >= 700:    # Prime Tier
+        amount_multiplier = 1.5
+        duration_months = 12
+    elif credit_score >= 550:  # Near-Prime Tier
+        amount_multiplier = 0.8
+        duration_months = 6
+    else:                      # Sub-Prime Tier
+        amount_multiplier = 0.2
+        duration_months = 3
         
-        # Defensive check for required columns
-        required_cols = ['TransactionStartTime', 'Amount', 'CustomerId', 'FraudResult']
-        for col in required_cols:
-            if col not in df.columns:
-                raise KeyError(f"Missing critical column: {col}")
-
-        # Date transformations
-        df['TransactionStartTime'] = pd.to_datetime(df['TransactionStartTime'])
-        df['Hour'] = df['TransactionStartTime'].dt.hour
-        df['Day'] = df['TransactionStartTime'].dt.day
-        df['Month'] = df['TransactionStartTime'].dt.month
-        
-        # Resolve multicollinearity immediately by dropping Value
-        if 'Value' in df.columns:
-            df = df.drop(columns=['Value'])
-            
-        return df
-
-def generate_rfm_proxy_targets(raw_df):
-    """
-    Aggregates transaction logs to customer-level profiles, scales features robustly,
-    and assigns a reproducible K-Means proxy target for credit risk.
-    """
-    # Clean features first
-    extractor = DefensiveFeatureExtractor()
-    cleaned_df = extractor.transform(raw_df)
+    optimal_amount = round(raw_monetary_estimate * amount_multiplier, -2)
+    # Ensure a basic micro-loan floor if historical volume was zero
+    optimal_amount = max(optimal_amount, 5000.0) 
     
-    # Define a fixed anchor date for consistent Recency measurements
-    snapshot_date = cleaned_df['TransactionStartTime'].max()
-    
-    # Aggregate to Customer Level
-    rfm = cleaned_df.groupby('CustomerId').agg({
-        'TransactionStartTime': lambda x: (snapshot_date - x.max()).days,
-        'Amount': ['count', 'sum', 'std']
-    })
-    
-    # Flatten columns elegantly
-    rfm.columns = ['Recency', 'Frequency', 'Monetary', 'Monetary_Std']
-    rfm['Monetary_Std'] = rfm['Monetary_Std'].fillna(0)
-    
-    # Log transform to tame extreme transaction outliers noted in EDA
-    for col in ['Frequency', 'Monetary']:
-        rfm[col] = np.log1p(np.abs(rfm[col]))
-        
-    # Scale robustly using Interquartile ranges
-    scaler = RobustScaler()
-    scaled_features = scaler.fit_transform(rfm[['Recency', 'Frequency', 'Monetary']])
-    
-    # Fit deterministic K-Means
-    kmeans = KMeans(n_clusters=3, random_state=42)
-    rfm['Cluster'] = kmeans.fit_predict(scaled_features)
-    
-    # Dynamically identify the highest-risk cluster (lowest frequency, lowest volume profile)
-    cluster_monetary = rfm.groupby('Cluster')['Monetary'].mean()
-    high_risk_cluster = cluster_monetary.idxmin()
-    
-    # Map binary label: 1 for bad risk, 0 for good risk
-    rfm['is_high_risk'] = (rfm['Cluster'] == high_risk_cluster).astype(int)
-    
-    # Rule-Based Override: If user has a transaction fraud history, force high-risk classification
-    fraud_customers = cleaned_df.groupby('CustomerId')['FraudResult'].sum()
-    high_risk_fraud_users = fraud_customers[fraud_customers > 0].index
-    rfm.loc[rfm.index.isin(high_risk_fraud_users), 'is_high_risk'] = 1
-    
-    return rfm.reset_index()[['CustomerId', 'Recency', 'Frequency', 'Monetary', 'is_high_risk']]
-
-if __name__ == "__main__":
-    # Tiny integration self-test to prove system validity
-    print("Pipeline compilation successful. Production components ready.")
+    return optimal_amount, duration_months
